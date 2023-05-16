@@ -163,7 +163,7 @@ class MainWindow(QWidget):
         self.pb_region.setMaximumWidth(150)
         self.pb_region.setDisabled(True)
 
-        self.pb_integral = QPushButton("Plot Integral")
+        self.pb_integral = QPushButton("Calculate Integral(s)")
         self.pb_integral.setStyleSheet(u"background-color: rgb(249, 240, 107);")
         self.pb_integral.setDisabled(True)
 
@@ -193,6 +193,7 @@ class MainWindow(QWidget):
         self.tw_scan.cellClicked.connect(self.update_scan_state)
         self.pb_region.clicked.connect(self.update_region)
         self.pb_integral.clicked.connect(self.plot_integral)
+        self.pb_report.clicked.connect(self.report)
 
     @Slot()
     def load_data(self):
@@ -271,6 +272,64 @@ class MainWindow(QWidget):
         self.pb_region.setEnabled(True)
         self.pb_integral.setEnabled(True)
         self.set_cell_table()
+
+    @Slot()
+    def report(self):
+        cell_list = []
+        data_list = []
+        n_row_list = []
+        for key, val in self.integral.items():
+            if val is None:
+                continue
+            cell_list.append(key)
+            data_list.append(val)
+            n_row_list.append(len(val[0]))
+        n_cell = len(cell_list)
+        if n_cell == 0:
+            QMessageBox.warning(self, "Warning", "Integral profiles not found!")
+            return
+        ft = QFileDialog.getSaveFileName(self, "Save CSV File", os.path.expanduser('~'), "*.csv")
+        file_name = ft[0]
+        if len(file_name) == 0:
+            return
+
+        temp_name = file_name.lower()
+        if not temp_name.endswith(".csv"):
+            file_name += ".csv"
+        header = True
+        with open(file_name, 'w') as fid:
+            row = 0
+            while True:
+                if header:
+                    line = ""
+                    for i in range(n_cell):
+                        line += f"Cell_{cell_list[i]}_lambda,Cell_{cell_list[i]}_OD,"
+                        line += f"Cell_{cell_list[i]}_STD"
+                        if i == n_cell - 1:
+                            line += "\n"
+                        else:
+                            line += ","
+                    header = False
+                    fid.write(line)
+                has_data = False
+                line = ""
+                for i in range(n_cell):
+                    if row >= n_row_list[i]:
+                        has_data = has_data or False
+                        line += ",,"
+                    else:
+                        has_data = has_data or True
+                        data = data_list[i]
+                        line += f"{data[0][row]},{data[1][row]},{data[2][row]}"
+                    if i == n_cell - 1:
+                        line += "\n"
+                    else:
+                        line += ","
+                if has_data:
+                    fid.write(line)
+                    row += 1
+                else:
+                    break
 
     @Slot(int, int)
     def update_lambda(self, row, col):
@@ -369,7 +428,6 @@ class MainWindow(QWidget):
         n_cell = shape[0]
         n_wavelength = shape[1]
         n_scan = shape[2]
-        color_step = 1 / n_scan
         for i in range(n_cell):
             cell_item = self.tw_cell.item(i, 0)
             cell_key = int(cell_item.text())
