@@ -241,6 +241,9 @@ class MainWindow(QWidget):
             abs_data["max_id"] = np.size(x_vals)
             self.absorbance.append(abs_data)
 
+        if len(cell_list) == 0:
+            QMessageBox.warning(self, "Warning!", "No 'RA' files found!")
+            return
         cell_list.sort()
         wavelength_list.sort()
         scan_list.sort()
