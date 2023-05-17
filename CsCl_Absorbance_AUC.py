@@ -1,5 +1,5 @@
 from PySide6.QtWidgets import (QApplication, QWidget, QVBoxLayout, QHBoxLayout, QTableWidgetItem,
-                               QPushButton, QFileDialog, QMessageBox, QTableWidget, QHeaderView, QCheckBox)
+                               QPushButton, QFileDialog, QMessageBox, QTableWidget, QHeaderView, QAbstractItemView)
 from PySide6.QtCore import (Qt, Slot, Signal)
 from PySide6.QtGui import QColor
 import numpy as np
@@ -118,6 +118,7 @@ class MainWindow(QWidget):
         self.tw_cell.setHorizontalHeaderLabels(["Cell"])
         self.tw_cell.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
         self.tw_cell.verticalHeader().setVisible(False)
+        self.tw_cell.setSelectionMode(QAbstractItemView.SingleSelection)
 
         self.tw_lamda = QTableWidget()
         self.tw_lamda.setColumnCount(1)
@@ -188,8 +189,8 @@ class MainWindow(QWidget):
         self.setLayout(lyt_main)
 
         self.pb_load.clicked.connect(self.load_data)
-        self.tw_cell.cellClicked.connect(self.update_lambda)
-        self.tw_lamda.cellClicked.connect(self.update_scan)
+        self.tw_cell.currentItemChanged.connect(self.update_lambda)
+        self.tw_lamda.currentItemChanged.connect(self.update_scan)
         self.tw_scan.cellClicked.connect(self.update_scan_state)
         self.pb_region.clicked.connect(self.update_region)
         self.pb_integral.clicked.connect(self.plot_integral)
@@ -334,9 +335,9 @@ class MainWindow(QWidget):
                 else:
                     break
 
-    @Slot(int, int)
-    def update_lambda(self, row, col):
-        cell_id = self.get_item_id(self.tw_cell.item(row, col), "cell")
+    @Slot(object, object)
+    def update_lambda(self, c_item, p_item):
+        cell_id = self.get_item_id(c_item, "cell")
         wavelength_scan_mat = self.index_matrix[cell_id]
         bool_vec = np.any(wavelength_scan_mat >= 0, axis=1)
         wavelength_ids = np.where(bool_vec)[0]
@@ -348,7 +349,7 @@ class MainWindow(QWidget):
                     break
         wavelength_list.sort()
 
-        self.tw_lamda.cellClicked.disconnect(self.update_scan)
+        self.tw_lamda.currentItemChanged.disconnect(self.update_scan)
         self.tw_lamda.clear()
         self.tw_lamda.setRowCount(len(wavelength_list))
         row = 0
@@ -359,15 +360,14 @@ class MainWindow(QWidget):
             row += 1
         self.tw_lamda.setHorizontalHeaderLabels(["Lambda"])
         self.tw_lamda.verticalHeader().setSectionResizeMode(QHeaderView.ResizeToContents)
-        self.tw_lamda.cellClicked.connect(self.update_scan)
+        self.tw_lamda.currentItemChanged.connect(self.update_scan)
         if row > 0:
             self.tw_lamda.setCurrentCell(0, 0)
-            self.update_scan(0, 0)
 
-    @Slot(int, int)
-    def update_scan(self, row, col):
+    @Slot(object, object)
+    def update_scan(self, c_item, p_item):
         cell_id = self.get_item_id(self.tw_cell.currentItem(), "cell")
-        wavelength_id = self.get_item_id(self.tw_lamda.item(row, col), "lambda")
+        wavelength_id = self.get_item_id(c_item, "lambda")
         bool_vec = self.index_matrix[cell_id, wavelength_id] >= 0
         scan_ids = np.where(bool_vec)[0]
         scan_list = []
@@ -557,7 +557,7 @@ class MainWindow(QWidget):
             curve.setData(x_vals, y_vals)
 
     def set_cell_table(self):
-        self.tw_cell.cellClicked.disconnect(self.update_lambda)
+        self.tw_cell.currentItemChanged.disconnect(self.update_lambda)
         self.tw_cell.clear()
         self.tw_cell.setRowCount(get_n_dict_items(self.cell))
         row = 0
@@ -568,10 +568,9 @@ class MainWindow(QWidget):
             row += 1
         self.tw_cell.setHorizontalHeaderLabels(["Cell"])
         self.tw_cell.verticalHeader().setSectionResizeMode(QHeaderView.ResizeToContents)
-        self.tw_cell.cellClicked.connect(self.update_lambda)
+        self.tw_cell.currentItemChanged.connect(self.update_lambda)
         if row > 0:
             self.tw_cell.setCurrentCell(0, 0)
-            self.update_lambda(0, 0)
 
     def pick_region(self, state: int):
         cell_key = int(self.tw_cell.currentItem().text())
