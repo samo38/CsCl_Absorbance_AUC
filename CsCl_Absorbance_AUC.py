@@ -418,10 +418,20 @@ class MainWindow(QWidget):
             self.pb_region.setText("Apply")
             self.pb_region.setStyleSheet(u"background-color: rgb(143, 240, 164);")
             self.pick_region(1)
+            self.pb_load.setDisabled(True)
+            self.pb_report.setDisabled(True)
+            self.tw_scan.setDisabled(True)
+            self.tw_lamda.setDisabled(True)
+            self.tw_scan.setDisabled(True)
         else:
             self.pb_region.setText("Set Region")
             self.pb_region.setStyleSheet(u"background-color: rgb(249, 240, 107);")
             self.pick_region(0)
+            self.pb_load.setEnabled(True)
+            self.pb_report.setEnabled(True)
+            self.tw_scan.setEnabled(True)
+            self.tw_lamda.setEnabled(True)
+            self.tw_scan.setEnabled(True)
 
     @Slot()
     def plot_integral(self):
@@ -507,8 +517,10 @@ class MainWindow(QWidget):
         cell_id = self.get_item_id(self.tw_cell.currentItem(), "cell")
         wavelength_id = self.get_item_id(self.tw_lamda.currentItem(), "lambda")
         if all_lambdas:
-            abs_ids = self.index_matrix[cell_id][:][-1]
+            abs_ids = self.index_matrix[cell_id][:, -1]
+            pen = pyqtgraph.mkPen(color='yellow', width=1)
         else:
+            pen = pyqtgraph.mkPen(color='magenta', width=1)
             abs_ids = []
             for i in range(self.tw_scan.rowCount()):
                 item = self.tw_scan.item(i, 0)
@@ -541,7 +553,6 @@ class MainWindow(QWidget):
                 self.figure_scans.setTitle(title=f"Cell {cell} at {wavelength} (nm)")
                 flag_title = -1
 
-            pen = pyqtgraph.mkPen(color='magenta', width=2)
             curve = self.figure_scans.plot(pen=pen)
             curve.setData(x_vals, y_vals)
 
