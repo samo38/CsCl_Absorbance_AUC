@@ -16,11 +16,12 @@ def str2float(x):
         return None
 
 
-def get_n_dict_items(x: dict):
-    counter = 0
-    for _ in x.items():
-        counter += 1
-    return counter
+def dict_keys_list(x: dict):
+    keys = []
+    for k in x.keys():
+        keys.append(k)
+    keys.sort()
+    return keys
 
 
 def parse_file(file_path):
@@ -79,14 +80,15 @@ class MainWindow(QWidget):
         super().__init__(parent)
         self.setMinimumSize(600, 400)
         self.setWindowTitle("Beckman Absorbance Analysis")
-        self.index_matrix = None
         self.absorbance = list()
-        self.integral = dict()
+        self.cell_wavelength_scan = dict()
+        self.cell_integral = dict()
         self.run_id = None
-        self.cell = dict()
         self.cell_minmax = dict()
-        self.wavelength = dict()
-        self.scan = dict()
+        self.curve_list = dict()
+        self.cell_last_scans = dict()
+        self.current_cell = 0
+        self.current_wavelengths = list()
         self.colors = [
             QColor(255, 255, 255),    # White
             QColor(255, 0, 0),        # Red
@@ -190,8 +192,8 @@ class MainWindow(QWidget):
         self.setLayout(lyt_main)
 
         self.pb_load.clicked.connect(self.load_data)
-        self.tw_cell.currentItemChanged.connect(self.update_lambda)
-        self.tw_lamda.itemSelectionChanged.connect(self.update_scan)
+        self.tw_cell.currentItemChanged.connect(self.update_tw_lambda)
+        self.tw_lamda.itemSelectionChanged.connect(self.update_tw_scan)
         self.tw_scan.cellClicked.connect(self.update_scan_state)
         self.pb_region.clicked.connect(self.update_region)
         self.pb_integral.clicked.connect(self.plot_integral)
@@ -203,12 +205,11 @@ class MainWindow(QWidget):
                                                      os.path.expanduser('~'), QFileDialog.ShowDirsOnly)
         if len(directory) == 0:
             return
-        self.clear_data()
+
         search_str = os.path.join(directory, "*.ra*")
         glob_list = glob.glob(search_str)
-        wavelength_list = list()
-        cell_list = list()
-        scan_list = list()
+        absorbance = []
+        run_id = None
         for i in range(len(glob_list)):
             fpath = glob_list[i]
             file_info = get_file_info(os.path.split(fpath)[1])
@@ -217,21 +218,14 @@ class MainWindow(QWidget):
             file_parsed = parse_file(fpath)
             if len(file_parsed) == 0:
                 continue
-            run_id, cell, scan, wavelength = file_info[0], file_info[1], file_info[2], file_info[3]
+            run_id_c, cell, scan, wavelength = file_info[0], file_info[1], file_info[2], file_info[3]
             x_vals, y_vals = file_parsed[0], file_parsed[1]
-            if self.run_id is None:
-                self.run_id = run_id
+            if run_id is None:
+                run_id = run_id_c
             else:
-                if self.run_id != run_id:
+                if run_id != run_id_c:
                     QMessageBox.warning(self, "Error!", f"More than one run ID found:\n{self.run_id}\n{run_id}")
-                    self.clear_data()
                     return
-            if wavelength not in wavelength_list:
-                wavelength_list.append(wavelength)
-            if cell not in cell_list:
-                cell_list.append(cell)
-            if scan not in scan_list:
-                scan_list.append(scan)
             abs_data = dict()
             abs_data["x_values"] = x_vals
             abs_data["y_values"] = y_vals
@@ -241,49 +235,52 @@ class MainWindow(QWidget):
             abs_data["state"] = True
             abs_data["min_id"] = 0
             abs_data["max_id"] = np.size(x_vals)
-            self.absorbance.append(abs_data)
+            absorbance.append(abs_data)
 
-        if len(cell_list) == 0:
+        if len(absorbance) == 0:
             QMessageBox.warning(self, "Warning!", "No 'RA' files found!")
             return
-        cell_list.sort()
-        wavelength_list.sort()
-        scan_list.sort()
-        n_cell = len(cell_list)
-        n_wavelength = len(wavelength_list)
-        n_scans = len(scan_list)
-
-        self.index_matrix = np.ones([n_cell, n_wavelength, n_scans], dtype=np.int32) * -1
-        for i in range(n_cell):
-            self.cell[cell_list[i]] = i
-            self.cell_minmax[cell_list[i]] = [None, None]
-            self.integral[cell_list[i]] = None
-
-        for i in range(n_wavelength):
-            self.wavelength[wavelength_list[i]] = i
-
-        for i in range(n_scans):
-            self.scan[scan_list[i]] = i
-
-        for i in range(len(self.absorbance)):
-            abs_data = self.absorbance[i]
+        self.clear_data()
+        self.run_id = run_id
+        self.absorbance = absorbance
+        for abs_id in range(len(absorbance)):
+            abs_data = absorbance[abs_id]
             cell = abs_data.get("cell")
             wavelength = abs_data.get("wavelength")
             scan = abs_data.get("scan")
-            id_cell = self.cell.get(cell)
-            id_wavelength = self.wavelength.get(wavelength)
-            id_scan = self.scan.get(scan)
-            self.index_matrix[id_cell, id_wavelength, id_scan] = i
+            wavelength_scan_list = self.cell_wavelength_scan.get(cell)
+            if wavelength_scan_list is None:
+                wavelength_scan_list = dict()
+            scan_list = wavelength_scan_list.get(wavelength)
+            if scan_list is None:
+                scan_list = dict()
+            scan_list[scan] = abs_id
+            wavelength_scan_list[wavelength] = scan_list
+            self.cell_wavelength_scan[cell] = wavelength_scan_list
+            self.absorbance.append(abs_data)
+
+        for cell, wavelength_scan in self.cell_wavelength_scan.items():
+            self.cell_minmax[cell] = [None, None]
+            self.cell_integral[cell] = None
+
+            last_scans = []
+            for wavelength, scan in wavelength_scan.items():
+                last_key = -100
+                for key in scan.keys():
+                    last_key = max(key, last_key)
+                last_scans.append(scan.get(last_key))
+            self.cell_last_scans[cell] = last_scans
+
         self.pb_region.setEnabled(True)
         self.pb_integral.setEnabled(True)
-        self.set_cell_table()
+        self.set_tw_cell()
 
     @Slot()
     def report(self):
         cell_list = []
         data_list = []
         n_row_list = []
-        for key, val in self.integral.items():
+        for key, val in self.cell_integral.items():
             if val is None:
                 continue
             cell_list.append(key)
@@ -337,62 +334,45 @@ class MainWindow(QWidget):
                     break
 
     @Slot(object, object)
-    def update_lambda(self, c_item, p_item):
-        cell_id = self.get_item_id(c_item, "cell")
-        wavelength_scan_mat = self.index_matrix[cell_id]
-        bool_vec = np.any(wavelength_scan_mat >= 0, axis=1)
-        wavelength_ids = np.where(bool_vec)[0]
-        wavelength_list = []
-        for i in wavelength_ids:
-            for key, value in self.wavelength.items():
-                if value == i:
-                    wavelength_list.append(key)
-                    break
-        wavelength_list.sort()
-
-        self.tw_lamda.itemSelectionChanged.disconnect(self.update_scan)
+    def update_tw_lambda(self, c_item, p_item):
+        cell = int(c_item.text())
+        self.current_cell = cell
+        self.current_wavelengths.clear()
+        wavelength_list = dict_keys_list(self.cell_wavelength_scan.get(cell))
+        self.tw_lamda.itemSelectionChanged.disconnect(self.update_tw_scan)
         self.tw_lamda.clear()
         self.tw_lamda.setRowCount(len(wavelength_list))
-        row = 0
-        for wavelength in wavelength_list:
-            item = QTableWidgetItem(str(wavelength))
+        for i in range(len(wavelength_list)):
+            item = QTableWidgetItem(str(wavelength_list[i]))
             item.setFlags(item.flags() & ~Qt.ItemFlag.ItemIsEditable)
-            self.tw_lamda.setItem(row, 0, item)
-            row += 1
+            self.tw_lamda.setItem(i, 0, item)
         self.tw_lamda.setHorizontalHeaderLabels(["Lambda"])
         self.tw_lamda.verticalHeader().setSectionResizeMode(QHeaderView.ResizeToContents)
-        self.tw_lamda.itemSelectionChanged.connect(self.update_scan)
-        if row > 0:
+        self.tw_lamda.itemSelectionChanged.connect(self.update_tw_scan)
+        if len(wavelength_list) > 0:
             self.tw_lamda.setCurrentCell(0, 0)
 
     @Slot()
-    def update_scan(self):
-        cell_id = self.get_item_id(self.tw_cell.currentItem(), "cell")
-        lambda_items = self.tw_lamda.selectedItems()
-        if len(lambda_items) == 0:
-            return
-        wavelength_ids = [self.get_item_id(item, "lambda") for item in lambda_items]
-        if len(wavelength_ids) == 1:
-            wavelength_id = wavelength_ids[0]
-            bool_vec = self.index_matrix[cell_id, wavelength_id] >= 0
-            scan_ids = np.where(bool_vec)[0]
-            scan_list = []
-            for i in scan_ids:
-                for key, value in self.scan.items():
-                    if value == i:
-                        scan_list.append(key)
-                        break
-            scan_list.sort()
-
+    def update_tw_scan(self):
+        cell = self.current_cell
+        # wavelength_scan_list = self.cell_wavelength_scan.get(cell)
+        wavelength_list = [int(item.text()) for item in self.tw_lamda.selectedItems()]
+        if len(wavelength_list) == 0:
+            row = self.tw_lamda.currentRow()
+            wavelength_list = [int(self.tw_lamda.item(row, 0).text())]
+        self.current_wavelengths = wavelength_list
+        if len(wavelength_list) == 1:
+            wavelength = int(wavelength_list[0])
+            scan_list = dict_keys_list(self.cell_wavelength_scan.get(cell).get(wavelength))
             self.tw_scan.cellClicked.disconnect(self.update_scan_state)
             self.tw_scan.clear()
             self.tw_scan.setRowCount(len(scan_list))
             row = 0
-            for scan in scan_list:
-                scan_id = self.scan.get(scan)
-                abs_id = self.index_matrix[cell_id, wavelength_id, scan_id]
+            scan_dict = self.cell_wavelength_scan.get(cell).get(wavelength)
+            for i in range(len(scan_list)):
+                abs_id = scan_dict.get(scan_list[i])
                 state = self.absorbance[abs_id].get("state")
-                item = QTableWidgetItem(str(scan))
+                item = QTableWidgetItem(str(scan_list[i]))
                 item.setFlags(Qt.ItemFlag.ItemIsUserCheckable | Qt.ItemFlag.ItemIsEnabled)
                 if state:
                     item.setCheckState(Qt.CheckState.Checked)
@@ -403,7 +383,6 @@ class MainWindow(QWidget):
             self.tw_scan.setHorizontalHeaderLabels(["Scan"])
             self.tw_scan.verticalHeader().setSectionResizeMode(QHeaderView.ResizeToContents)
             self.tw_scan.cellClicked.connect(self.update_scan_state)
-
         else:
             self.tw_scan.cellClicked.disconnect(self.update_scan_state)
             self.tw_scan.clear()
@@ -411,20 +390,20 @@ class MainWindow(QWidget):
             self.tw_scan.setHorizontalHeaderLabels(["Scan"])
             self.tw_scan.verticalHeader().setSectionResizeMode(QHeaderView.ResizeToContents)
             self.tw_scan.cellClicked.connect(self.update_scan_state)
-        self.plot_profile(wavelength_ids)
+        self.plot_scans()
 
     @Slot(int, int)
     def update_scan_state(self, row, col):
-        cell_id = self.get_item_id(self.tw_cell.currentItem(), "cell")
-        wavelength_id = self.get_item_id(self.tw_lamda.currentItem(), "lambda")
+        cell = self.current_cell
+        wavelength = self.current_wavelengths[0]
         item = self.tw_scan.item(row, col)
-        scan_id = self.get_item_id(item, "scan")
-        abs_id = self.index_matrix[cell_id, wavelength_id, scan_id]
+        scan = int(item.text())
+        abs_id = self.cell_wavelength_scan.get(cell).get(wavelength).get(scan)
         if item.checkState() == Qt.CheckState.Checked:
             self.absorbance[abs_id]["state"] = True
         else:
             self.absorbance[abs_id]["state"] = False
-        self.plot_profile([wavelength_id])
+        self.plot_scans()
 
     @Slot(bool)
     def update_region(self, checked):
@@ -451,45 +430,38 @@ class MainWindow(QWidget):
     def plot_integral(self):
         self.figure_area.clear()
         self.figure_area.addLegend()
-        shape = self.index_matrix.shape
-        n_cell = shape[0]
-        n_wavelength = shape[1]
-        n_scan = shape[2]
-        for i in range(n_cell):
-            cell_item = self.tw_cell.item(i, 0)
-            cell_key = int(cell_item.text())
-            [min_x, max_x] = self.cell_minmax.get(cell_key)
+        counter = -1
+        for cell in self.cell_wavelength_scan.keys():
+            counter += 1
+            [min_x, max_x] = self.cell_minmax.get(cell)
             if min_x is None or max_x is None:
                 continue
             wavelength_vec = []
             integral_vec = []
             std_vec = []
-            for j in range(n_wavelength):
+            for wavelength in self.cell_wavelength_scan.get(cell).keys():
                 int_list = []
-                for k in range(n_scan):
-                    abs_id = self.index_matrix[i, j, k]
-                    if abs_id < 0:
-                        continue
+                for abs_id in self.cell_wavelength_scan.get(cell).get(wavelength).values():
                     abs_data = self.absorbance[abs_id]
-                    x_val = abs_data.get("x_values")
-                    y_val = abs_data.get("y_values")
                     state = abs_data.get("state")
-                    min_id = abs_data.get("min_id")
-                    max_id = abs_data.get("max_id")
                     if not state:
                         continue
+                    x_val = abs_data.get("x_values")
+                    y_val = abs_data.get("y_values")
+                    min_id = abs_data.get("min_id")
+                    max_id = abs_data.get("max_id")
                     area = np.trapz(y_val[min_id: max_id], x_val[min_id: max_id])
                     int_list.append(area)
-                lambda_key = -1
-                for key, val in self.wavelength.items():
-                    if val == j:
-                        lambda_key = key
-                        break
-                if lambda_key != -1:
-                    wavelength_vec.append(lambda_key)
-                    int_list = np.array(int_list, dtype=np.float32)
-                    integral_vec.append(np.mean(int_list))
-                    std_vec.append(np.std(int_list))
+                if len(int_list) == 0:
+                    continue
+                wavelength_vec.append(wavelength)
+                int_list = np.array(int_list, dtype=np.float32)
+                integral_vec.append(np.mean(int_list))
+                std_vec.append(np.std(int_list))
+
+            if len(wavelength_vec) == 0:
+                self.cell_integral[cell] = None
+                continue
             wavelength_vec = np.array(wavelength_vec, dtype=np.float32)
             integral_vec = np.array(integral_vec, dtype=np.float32)
             std_vec = np.array(std_vec, dtype=np.float32)
@@ -501,102 +473,89 @@ class MainWindow(QWidget):
             cell_integral.append(wavelength_vec)
             cell_integral.append(integral_vec)
             cell_integral.append(std_vec)
-            self.integral[cell_key] = cell_integral
+            self.cell_integral[cell] = cell_integral
 
-            pen = pyqtgraph.mkPen(color=self.colors[i % len(self.colors)], width=2)
-            self.figure_area.plot(wavelength_vec, integral_vec, pen=pen, name=str(cell_key))
+            pen = pyqtgraph.mkPen(color=self.colors[counter % len(self.colors)], width=2)
+            self.figure_area.plot(wavelength_vec, integral_vec, pen=pen, name=str(cell))
 
     def clear_data(self):
-        self.index_matrix = None
         self.absorbance.clear()
+        self.cell_wavelength_scan.clear()
+        self.cell_integral.clear()
         self.run_id = None
-        self.integral.clear()
-        self.cell.clear()
         self.cell_minmax.clear()
-        self.wavelength.clear()
-        self.scan.clear()
+        self.curve_list.clear()
+        self.cell_last_scans.clear()
+        self.current_cell = 0
+        self.current_wavelengths.clear()
 
-    def get_item_id(self, item, item_type):
-        key = int(item.text())
-        if item_type == "cell":
-            return self.cell.get(key)
-        elif item_type == "lambda":
-            return self.wavelength.get(key)
-        elif item_type == "scan":
-            return self.scan.get(key)
-        else:
-            return None
-
-    def plot_profile(self, wavelength_ids, all_lambdas=False):
+    def plot_last_scans(self):
+        cell = self.current_cell
+        last_scans = self.cell_last_scans.get(cell)
         self.figure_scans.clear()
-        cell_id = self.get_item_id(self.tw_cell.currentItem(), "cell")
-        # wavelength_id = self.get_item_id(self.tw_lamda.currentItem(), "lambda")
-        if all_lambdas:
-            abs_ids = self.index_matrix[cell_id][:, -1]
-            pen = pyqtgraph.mkPen(color='yellow', width=1)
-            flag_title = "ALL"
-        else:
-            if len(wavelength_ids) == 0:
-                return
-            elif len(wavelength_ids) == 1:
-                flag_title = "SINGLE"
-            else:
-                flag_title = "MULTIPLE"
-            pen = pyqtgraph.mkPen(color='magenta', width=1)
-            abs_ids = self.index_matrix[cell_id, wavelength_ids]
-            abs_ids = np.reshape(abs_ids, abs_ids.size)
-
-        for index in abs_ids:
-            if index < 0:
-                continue
-            abs_data = self.absorbance[index]
-            if not abs_data.get("state"):
-                continue
-            state = abs_data.get("state")
-            if not state:
-                continue
+        pen = pyqtgraph.mkPen(color='yellow', width=1)
+        for abs_id in last_scans:
+            abs_data = self.absorbance[abs_id]
             min_id = abs_data.get("min_id")
             max_id = abs_data.get("max_id")
             x_vals = abs_data.get("x_values")[min_id: max_id]
             y_vals = abs_data.get("y_values")[min_id: max_id]
-            if flag_title == "ALL":
-                cell = abs_data.get("cell")
-                self.figure_scans.setTitle(title=f"Cell {cell}")
-                flag_title = ""
-            elif flag_title == "SINGLE":
-                cell = abs_data.get("cell")
-                wavelength = abs_data.get("wavelength")
-                self.figure_scans.setTitle(title=f"Cell {cell} at {wavelength} (nm)")
-                flag_title = ""
-            elif flag_title == "MULTIPLE":
-                cell = abs_data.get("cell")
-                self.figure_scans.setTitle(title=f"Cell {cell}, multiple wavelengths")
-                flag_title = ""
-
+            cell = abs_data.get("cell")
+            self.figure_scans.setTitle(title=f"Cell {cell}")
             curve = self.figure_scans.plot(pen=pen)
             curve.setData(x_vals, y_vals)
 
-    def set_cell_table(self):
-        self.tw_cell.currentItemChanged.disconnect(self.update_lambda)
+    def plot_scans(self):
+        self.figure_scans.clear()
+        cell = self.current_cell
+        wavelength_keys = self.current_wavelengths
+        if len(wavelength_keys) == 1:
+            flag_title = "SINGLE"
+        else:
+            flag_title = "MULTIPLE"
+        pen = pyqtgraph.mkPen(color='magenta', width=1)
+
+        wavelength_scan = self.cell_wavelength_scan.get(cell)
+        for wavelength in wavelength_keys:
+            for scan, abs_id in wavelength_scan.get(wavelength).items():
+                abs_data = self.absorbance[abs_id]
+                if not abs_data.get("state"):
+                    continue
+                min_id = abs_data.get("min_id")
+                max_id = abs_data.get("max_id")
+                x_vals = abs_data.get("x_values")[min_id: max_id]
+                y_vals = abs_data.get("y_values")[min_id: max_id]
+                cell = abs_data.get("cell")
+                if flag_title == "SINGLE":
+                    wavelength = abs_data.get("wavelength")
+                    self.figure_scans.setTitle(title=f"Cell {cell} at {wavelength} (nm)")
+                    flag_title = ""
+                elif flag_title == "MULTIPLE":
+                    self.figure_scans.setTitle(title=f"Cell {cell}, multiple wavelengths")
+                    flag_title = ""
+                curve = self.figure_scans.plot(pen=pen)
+                curve.setData(x_vals, y_vals)
+
+    def set_tw_cell(self):
+        self.tw_cell.currentItemChanged.disconnect(self.update_tw_lambda)
         self.tw_cell.clear()
-        self.tw_cell.setRowCount(get_n_dict_items(self.cell))
-        row = 0
-        for cell in self.cell.keys():
-            item = QTableWidgetItem(str(cell))
+        cell_list = dict_keys_list(self.cell_wavelength_scan)
+        self.tw_cell.setRowCount(len(cell_list))
+        for i in range(len(cell_list)):
+            item = QTableWidgetItem(str(cell_list[i]))
             item.setFlags(item.flags() & ~Qt.ItemFlag.ItemIsEditable)
-            self.tw_cell.setItem(row, 0, item)
-            row += 1
+            self.tw_cell.setItem(i, 0, item)
         self.tw_cell.setHorizontalHeaderLabels(["Cell"])
         self.tw_cell.verticalHeader().setSectionResizeMode(QHeaderView.ResizeToContents)
-        self.tw_cell.currentItemChanged.connect(self.update_lambda)
-        if row > 0:
+        self.tw_cell.currentItemChanged.connect(self.update_tw_lambda)
+        if len(cell_list) > 0:
             self.tw_cell.setCurrentCell(0, 0)
 
     def pick_region(self, state: int):
-        cell_key = int(self.tw_cell.currentItem().text())
+        cell = self.current_cell
         if state == 1:  # connect picker
-            self.plot_profile([], all_lambdas=True)
-            [min_x, max_x] = self.cell_minmax.get(cell_key)
+            self.plot_last_scans()
+            [min_x, max_x] = self.cell_minmax.get(cell)
             if min_x is None or max_x is None:
                 min_x = 5.8
                 max_x = 7.2
@@ -604,25 +563,16 @@ class MainWindow(QWidget):
             self.figure_scans.addItem(self.region_picker)
         elif state == 0:  # accept and close picker
             [min_val, max_val] = self.region_picker.getRegion()
-            self.cell_minmax[cell_key] = [min_val, max_val]
+            self.cell_minmax[cell] = [min_val, max_val]
             self.apply_region()
-            cell_id = self.get_item_id(self.tw_cell.currentItem(), "cell")
-            lambda_items = self.tw_lamda.selectedItems()
-            wavelength_ids = [self.get_item_id(item, "lambda") for item in lambda_items]
-            self.plot_profile(wavelength_ids)
+            self.plot_scans()
 
     def apply_region(self):
-        cell_item = self.tw_cell.currentItem()
-        cell_key = int(cell_item.text())
-        cell_id = self.get_item_id(cell_item, "cell")
-        [min_x, max_x] = self.cell_minmax.get(cell_key)
-        index_matrix = self.index_matrix[cell_id]
-        n_wvl, n_scn = index_matrix.shape[0], index_matrix.shape[1]
-        for i in range(n_wvl):
-            for j in range(n_scn):
-                abs_id = index_matrix[i, j]
-                if abs_id < 0:
-                    continue
+        cell = self.current_cell
+        [min_x, max_x] = self.cell_minmax.get(cell)
+        wavelength_scan = self.cell_wavelength_scan.get(cell)
+        for wavelength, scan in wavelength_scan.items():
+            for abs_id in scan.values():
                 abs_data = self.absorbance[abs_id]
                 x_val = abs_data.get("x_values")
                 trim_b = np.logical_and(x_val >= min_x, x_val <= max_x)
