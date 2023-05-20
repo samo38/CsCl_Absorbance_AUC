@@ -351,15 +351,12 @@ class MainWindow(QWidget):
         self.tw_lamda.itemSelectionChanged.connect(self.update_tw_scan)
         if len(wavelength_list) > 0:
             self.tw_lamda.setCurrentCell(0, 0)
+            self.tw_lamda.setCurrentItem(self.tw_lamda.item(0, 0))
 
     @Slot()
     def update_tw_scan(self):
         cell = self.current_cell
-        # wavelength_scan_list = self.cell_wavelength_scan.get(cell)
         wavelength_list = [int(item.text()) for item in self.tw_lamda.selectedItems()]
-        if len(wavelength_list) == 0:
-            row = self.tw_lamda.currentRow()
-            wavelength_list = [int(self.tw_lamda.item(row, 0).text())]
         self.current_wavelengths = wavelength_list
         if len(wavelength_list) == 1:
             wavelength = int(wavelength_list[0])
@@ -509,7 +506,10 @@ class MainWindow(QWidget):
         self.figure_scans.clear()
         cell = self.current_cell
         wavelength_keys = self.current_wavelengths
-        if len(wavelength_keys) == 1:
+        if len(wavelength_keys) == 0:
+            self.figure_scans.setTitle(title="")
+            return
+        elif len(wavelength_keys) == 1:
             flag_title = "SINGLE"
         else:
             flag_title = "MULTIPLE"
@@ -550,6 +550,7 @@ class MainWindow(QWidget):
         self.tw_cell.currentItemChanged.connect(self.update_tw_lambda)
         if len(cell_list) > 0:
             self.tw_cell.setCurrentCell(0, 0)
+            self.tw_cell.setCurrentItem(self.tw_cell.item(0, 0))
 
     def pick_region(self, state: int):
         cell = self.current_cell
