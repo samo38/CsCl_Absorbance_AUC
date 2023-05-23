@@ -322,7 +322,7 @@ class MainWindow(QWidget):
                     else:
                         has_data = has_data or True
                         data = data_list[i]
-                        line += f"{data[0][row]},{data[1][row]},{data[2][row]}"
+                        line += f"{data[0][row]},{data[1][row]:.8f},{data[2][row]:.8f}"
                     if i == n_cell - 1:
                         line += "\n"
                     else:
